@@ -1,0 +1,54 @@
+Zmieniłem trochę format danych z kluczem (uprościłęm go)
+po prostu nie zapisuje tego z użyciem systemowej funkcji
+ale wszystko ze standardowego wyjścia
+ *
+N - ilość kluczy; Mi długość klucza i Mik - k-ty znak klucza i
+(zapsany jako int potem konwersja do char)
+Dzięki temu możesz tworzyć Pliki w edytorze tekstowym
+"Enter" jest opcjonalny (wystarczy spacja)
+ *
+N
+M1 M2 M3
+M1a M1b M1c
+M2a M2b M2c
+ *
+ *
+Przykład:
+2
+5 6
+53 75 76 47 67
+67 45 36 76 54 74
+ *
+ *
+initBlowfish, initKeysData, decrypt, encrypt , F- tutaj nie bylo kombinowania,
+w zasadzie to dokladnie zaimplementowany algorym autora (kody sa dostepne)
+INITIAL_P, INITIAL_Sbox - to sa losowe wartosc (tez zaczerpniete od autora algorytmu,
+dzieki temu wyniki sa takie same jak te z programu autora)
+ *
+CreateKeysFile - albo mam plik z kluczami, albo tworze,
+jesli tworze to moge albo stworzyc losowy, albo podac samemu
+Generalnie to jest dodatek, ale z uwagi na to ze wymyslilem sobie wlasny
+format pliku z kluczem to jest to bardzo przydatne
+ *
+EncryptFile - każda porcja danych nowy klucz (zmieniam je rotacyjnie)
+kod jest paskudny bo jest duzo operacji wejscia-wyjscia
+ *
+DecryptFile - tak samo jak EncryptFile
+ *
+Plik z danymi wejsciowymi nie zawsze ma taki rozmiar by dzielil sie on przez 64b
+dlatego gdy wczytuje dane wejsciowe w EncryptFile i natrafie na ostatnia porcje danych
+porcje ktora jest niepelna  przedzial [0,8) znakow to uzupelniam zerami,
+by wiedziec gdzie sie konczy plik z danymi dodaje jeszcze jedna porcje danych
+ktora mowi o tym ile danych w poprzedniej porcji jest danymi autentycznymi
+a nie danymi dopisanymi
+Zatem podczas DecryptFile wiem, ze na koncu pliku bede mial dwa pakiety
+z ktorych jeden bedzie zawieral jakas pocje danych, a drugi ilosc oznaczajaca
+ile z tej pierwszej porcji pochodzi z pliku wejsciowego
+Dzieki temu udaje mi sie za kazdym razem po operacjiach szyfrowania
+i odszyfrowania uzyskac plik identyczny do wejsciowego.
+ *
+Przetestowalem na kilkudziesiecu przykladach wiec powinno dzialac
+Zgodnasc z oryginalem testowalem na jakiejs setce przykladow
+(pojedyncze wywolania na encrypt/decrypt dla danego klucza)
+Dla danych blokowych nie porownywalem z oryginalem - tutaj mamy
+wlasny sposob przetwarzania danych wiec prawie na pewno beda inne wyniki

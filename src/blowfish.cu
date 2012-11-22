@@ -2,69 +2,12 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-/*
- * 		./myBlowfish file output <keyFile.in
 
-		./myBlowfish -d output file1 <keyFile.in
- * */
-/*
- * Zmieniłem trochę format danych z kluczem (uprościłęm go)
- * po prostu nie zapisuje tego z użyciem systemowej funkcji
- * ale wszystko ze standardowego wyjścia
- *
- * N - ilość kluczy; Mi długość klucza i Mik - k-ty znak klucza i
- * (zapsany jako int potem konwersja do char)
- * Dzięki temu możesz tworzyć Pliki w edytorze tekstowym
- * "Enter" jest opcjonalny (wystarczy spacja)
- *
- * N
- * M1 M2 M3
- * M1a M1b M1c
- * M2a M2b M2c
- *
- *
- * Przykład:
- * 2
- * 5 6
- * 53 75 76 47 67
- * 67 45 36 76 54 74
- *
- *
- * /
-/*
- * initBlowfish, initKeysData, decrypt, encrypt , F- tutaj nie bylo kombinowania,
- * w zasadzie to dokladnie zaimplementowany algorym autora (kody sa dostepne)
- * INITIAL_P, INITIAL_Sbox - to sa losowe wartosc (tez zaczerpniete od autora algorytmu,
- * dzieki temu wyniki sa takie same jak te z programu autora)
- *
- * CreateKeysFile - albo mam plik z kluczami, albo tworze,
- * jesli tworze to moge albo stworzyc losowy, albo podac samemu
- * Generalnie to jest dodatek, ale z uwagi na to ze wymyslilem sobie wlasny
- * format pliku z kluczem to jest to bardzo przydatne
- *
- * EncryptFile - każda porcja danych nowy klucz (zmieniam je rotacyjnie)
- * kod jest paskudny bo jest duzo operacji wejscia-wyjscia
- *
- * DecryptFile - tak samo jak EncryptFile
- *
- * Plik z danymi wejsciowymi nie zawsze ma taki rozmiar by dzielil sie on przez 64b
- * dlatego gdy wczytuje dane wejsciowe w EncryptFile i natrafie na ostatnia porcje danych
- * porcje ktora jest niepelna  przedzial [0,8) znakow to uzupelniam zerami,
- * by wiedziec gdzie sie konczy plik z danymi dodaje jeszcze jedna porcje danych
- * ktora mowi o tym ile danych w poprzedniej porcji jest danymi autentycznymi
- * a nie danymi dopisanymi
- * Zatem podczas DecryptFile wiem, ze na koncu pliku bede mial dwa pakiety
- * z ktorych jeden bedzie zawieral jakas pocje danych, a drugi ilosc oznaczajaca
- * ile z tej pierwszej porcji pochodzi z pliku wejsciowego
- * Dzieki temu udaje mi sie za kazdym razem po operacjiach szyfrowania
- * i odszyfrowania uzyskac plik identyczny do wejsciowego.
- *
- * Przetestowalem na kilkudziesiecu przykladach wiec powinno dzialac
- * Zgodnasc z oryginalem testowalem na jakiejs setce przykladow
- * (pojedyncze wywolania na encrypt/decrypt dla danego klucza)
- * Dla danych blokowych nie porownywalem z oryginalem - tutaj mamy
- * wlasny sposob przetwarzania danych wiec prawie na pewno beda inne wyniki
- */
+#define USAGE \
+	"Usage: \n" \
+	"./blowfish plaintext.in ciphertext.out < KeyFile.in \n" \
+	"./blowfish -d ciphertext.in plaintext.out < KeyFile.in \n"
+
 const unsigned long INITIAL_P[16 + 2] = {
         0x243F6A88L, 0x85A308D3L, 0x13198A2EL, 0x03707344L,
         0xA4093822L, 0x299F31D0L, 0x082EFA98L, 0xEC4E6C89L,
@@ -376,7 +319,7 @@ void decrypt(KeyData* keyData, unsigned long *l, unsigned long *r) {
 	}
 }
 
-int initBlowfish(KeyData *keyData, char* key, int keySize) {
+int initBlowfish(KeyData *keyData, unsigned char* key, int keySize) {
 	int i, j, k;
 	unsigned int d;
 	unsigned long l = 0x000000000, r = 0x000000000;
@@ -408,46 +351,30 @@ int initBlowfish(KeyData *keyData, char* key, int keySize) {
 			keyData->sbox[i][j] = l;
 			keyData->sbox[i][j + 1] = r;
 		}
+
+	return 123; //FIXME
 }
 
-void initKeysData(/*FILE* keysFile, */KeyData *keys, int *nrOfKeys) {
-	/*if(fread(nrOfKeys,sizeof(int),1,keysFile)!=1){
-	 printf("%s\n",strerror(errno));
-	 exit(1);
-	 }*/
-	scanf("%d", nrOfKeys);
+void initKeysData(KeyData *key) {
 	unsigned char *subkey = (unsigned char*) malloc(530 * sizeof(unsigned char));
-	//printf("nrOfKeys %d \n",*nrOfKeys);
-	int *t = (int*) malloc(sizeof(int) * (*nrOfKeys));
 	int i = 0, j, intToChar;
-	for (i = 0; i < *nrOfKeys; i++) {
-		scanf("%d", t + i);
-		/*if(fread((t+i),sizeof(int),1,keysFile)!=1){
-		 printf("%s\n",strerror(errno));
-		 exit(1);
-		 }*/
-		//printf("Key nr %d -> size = %d \n",i ,t[i]);
-	}
+	int keyLength;
+	scanf("%d", &keyLength);
 
-	keys = (KeyData*) malloc(sizeof(KeyData) * (*nrOfKeys));
-	for (i = 0; i < *nrOfKeys; i++) {
-		/*if(fread(subkey,1,t[i],keysFile)!=t[i]){
-		 printf("%s\n",strerror(errno));
-		 exit(1);
-		 }*/
-		for (j = 0; j < t[i]; j++) {
-			scanf("%d", &intToChar);
-			subkey[j] = (char) intToChar;
-		}
-		initBlowfish(keys + i, subkey, t[i]);
+	key = (KeyData*) malloc(sizeof(KeyData) * 1);
+
+	for (j = 0; j < keyLength; j++) {
+		scanf("%d", &intToChar);
+		subkey[j] = (char) intToChar;
 	}
+	initBlowfish(key, subkey,keyLength);
 
 }
 
-void EncryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
-	int i = 0, j, k, it;
+void EncryptFile(FILE* dataFile, FILE* output, KeyData *key) {
+	int j, k, it;
 	int n = 1000;
-	unsigned int *l = malloc(sizeof(unsigned int) * (n + 1));
+	unsigned int *l = (unsigned int*)malloc(sizeof(unsigned int) * (n + 1));
 	unsigned long ll, lr;
 	while (1) {
 		j = 0;
@@ -465,7 +392,7 @@ void EncryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
 		for (it = 0; it < 1000; it += 2) {
 			ll = (unsigned long) l[it];
 			lr = (unsigned long) l[it + 1];
-			encrypt(keys + i, &ll, &lr);
+			encrypt(key, &ll, &lr);
 			l[it] = (unsigned int) ll;
 			l[it + 1] = (unsigned int) lr;
 		}
@@ -475,18 +402,15 @@ void EncryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
 			printf("%s\n", strerror(errno));
 			exit(1);
 		}
-		i++;
-		if (i == nrOfKeys) {
-			i = 0;
-		}
+
 		if (j != 4 * n) {
-			//printf("%d\n",j);
+
 			ll = (unsigned long) (j);
 			lr = (unsigned long) (0);
-			encrypt(keys + i, &ll, &lr);
+			encrypt(key, &ll, &lr);
 			l[0] = (unsigned int) ll;
 			l[1] = (unsigned int) lr;
-			//printf("%d %d\n",l[0],l[1]);
+
 			if ((fwrite(l, sizeof(unsigned char), 8, output)) != 8) {
 				printf("%s\n", strerror(errno));
 				exit(1);
@@ -495,11 +419,12 @@ void EncryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
 		}
 	}
 }
-void DecryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
-	int i = 0, j, k, it;
+void DecryptFile(FILE* dataFile, FILE* output, KeyData *key) {
+	int j, k, it;
 	int n = 1000;
-	unsigned int *l = malloc(sizeof(unsigned int) * (n + 1));
-	unsigned int *l1 = malloc(sizeof(unsigned int) * (n + 1));
+
+	unsigned int *l = (unsigned int *)malloc(sizeof(unsigned int) * (n + 1));
+	unsigned int *l1 =(unsigned int *) malloc(sizeof(unsigned int) * (n + 1));
 	unsigned long ll, lr;
 	j = 0;
 	if ((j = fread(l, sizeof(unsigned char), 4 * n, dataFile)) != 4 * n) {
@@ -515,15 +440,11 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
 	for (it = 0; it < n; it += 2) {
 		ll = (unsigned long) l[it];
 		lr = (unsigned long) l[it + 1];
-		decrypt(keys + i, &ll, &lr);
+		decrypt(key, &ll, &lr);
 		l1[it] = (unsigned int) ll;
 		l1[it + 1] = (unsigned int) lr;
 	}
 	/***************************************************************/
-	i++;
-	if (i == nrOfKeys) {
-		i = 0;
-	}
 
 	while (1) {
 		j = 0;
@@ -536,12 +457,12 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
 		}
 
 		if (j != 4 * n) {
-			//printf("%d %d\n",l[0],l[1]);
+
 			ll = (unsigned long) l[0];
 			lr = (unsigned long) l[1];
-			decrypt(keys + i, &ll, &lr);
+			decrypt(key, &ll, &lr);
 			l[0] = (unsigned int) ll;
-			//printf("%d\n",l[0]);
+
 			if ((fwrite(l1, sizeof(unsigned char), l[0], output)) != l[0]) {
 				if (ferror(dataFile) != 0) {
 					printf("%s\n", strerror(errno));
@@ -562,16 +483,19 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *keys, int nrOfKeys) {
 			for (it = 0; it < n; it += 2) {
 				ll = (unsigned long) l[it];
 				lr = (unsigned long) l[it + 1];
-				decrypt(keys + i, &ll, &lr);
+				decrypt(key, &ll, &lr);
 				l1[it] = (unsigned int) ll;
 				l1[it + 1] = (unsigned int) lr;
 			}
 			/***************************************************************/
 		}
-		i++;
-		if (i == nrOfKeys)
-			i = 0;
+
 	}
+}
+
+void showErrAndQuit(const char *s) {
+	printf(s);
+	exit(1);
 }
 
 int main(int argc, char* argv[]) {
@@ -581,48 +505,29 @@ int main(int argc, char* argv[]) {
 
 	if (argc == 4)
 		isDecryption = 1;
-	if (!(argc == 3 || (argc == 4 && (!strcmp(argv[1], "-d"))))) {
-		printf("Usage:\n./myBlowfish DataFile.in output.out < KeyFile.in\n./myBlowfish -d EncyptedFile.in output.out < KeyFile.in \n");
-		exit(1);
-	}
-	//if(!isDecryption)
-	//CreateKeysFile(argv[2 + isDecryption]);
+	if (!(argc == 3 || (argc == 4 && (!strcmp(argv[1], "-d")))))
+		showErrAndQuit(USAGE);
+
 	FILE* dataFile = fopen(argv[1 + isDecryption], "r");
-	if (dataFile == NULL ) {
-		printf("%s\n", strerror(errno));
-		exit(1);
-	}
-	/*
-	 FILE* keysFile = fopen(argv[2+isDecryption],"r");
-	 if(keysFile == NULL){
-	 printf("%s\n",strerror(errno));
-	 exit(1);
-	 }*/
+	if (dataFile == NULL)
+		showErrAndQuit(strerror(errno));
+
 	// Inicjalizuje sboxy i p-tablice dla kazdego klucza
-	initKeysData(/*keysFile,*/keys, &nrOfKeys);
-	/*
-	 if(fclose(keysFile)==EOF){
-	 printf("%s\n",strerror(errno));
-	 exit(1);
-	 }*/
+	initKeysData(keys);
+
 	FILE* output = fopen(argv[2 + isDecryption], "w+");
-	if (output == NULL ) {
-		printf("%s\n", strerror(errno));
-		exit(1);
-	}
+	if (output == NULL)
+		showErrAndQuit(strerror(errno));
 	// Wykonuje Szyfrowanie dla kazdego klucza
 	if (!isDecryption)
-		EncryptFile(dataFile, output, keys, nrOfKeys);
+		EncryptFile(dataFile, output, keys);
 	else
-		DecryptFile(dataFile, output, keys, nrOfKeys);
-	if (fclose(output) == EOF) {
-		printf("%s\n", strerror(errno));
-		exit(1);
-	}
-	if (fclose(dataFile) == EOF) {
-		printf("%s\n", strerror(errno));
-		exit(1);
-	}
+		DecryptFile(dataFile, output, keys);
+
+	if (fclose(output) == EOF)
+		showErrAndQuit(strerror(errno));
+	if (fclose(dataFile) == EOF)
+		showErrAndQuit(strerror(errno));
 
 	return 0;
 }
