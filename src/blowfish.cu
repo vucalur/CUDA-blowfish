@@ -8,7 +8,9 @@
 	"./blowfish plaintext.in ciphertext.out < KeyFile.in \n" \
 	"./blowfish -d ciphertext.in plaintext.out < KeyFile.in \n"
 
-const unsigned long INITIAL_P[16 + 2] = {
+typedef unsigned long ul;
+
+const ul INITIAL_P[16 + 2] = {
         0x243F6A88L, 0x85A308D3L, 0x13198A2EL, 0x03707344L,
         0xA4093822L, 0x299F31D0L, 0x082EFA98L, 0xEC4E6C89L,
         0x452821E6L, 0x38D01377L, 0xBE5466CFL, 0x34E90C6CL,
@@ -16,7 +18,7 @@ const unsigned long INITIAL_P[16 + 2] = {
         0x9216D5D9L, 0x8979FB1BL
 };
 
-const unsigned long INITIAL_Sbox[4][256] = {
+const ul INITIAL_Sbox[4][256] = {
     {   0xD1310BA6L, 0x98DFB5ACL, 0x2FFD72DBL, 0xD01ADFB7L,
         0xB8E1AFEDL, 0x6A267E96L, 0xBA7C9045L, 0xF12C7F99L,
         0x24A19947L, 0xB3916CF7L, 0x0801F2E2L, 0x858EFC16L,
@@ -276,17 +278,17 @@ const unsigned long INITIAL_Sbox[4][256] = {
 };
 
 typedef struct {
-	unsigned long sbox[4][256];
-	unsigned long p[18];
+	ul sbox[4][256];
+	ul p[18];
 } KeyData;
 
-unsigned long F(KeyData* keyData, unsigned long a) {
-	unsigned long FF = 0xFFL;
+ul F(KeyData* keyData, ul a) {
+	ul FF = 0xFFL;
 	return ((keyData->sbox[0][(a >> 24) & FF] + keyData->sbox[1][(a >> 16) & FF]) ^ (keyData->sbox[2][(a >> 8) & FF]))
 			+ keyData->sbox[3][(a) & FF];
 }
 
-void encrypt(KeyData* keyData, unsigned long *l, unsigned long *r) {
+void encrypt(KeyData* keyData, ul *l, ul *r) {
 	int a;
 	for (int i = 0; i < 16; ++i) {
 		*l = (*l) ^ (keyData->p[i]);
@@ -302,7 +304,7 @@ void encrypt(KeyData* keyData, unsigned long *l, unsigned long *r) {
 	*l = (*l) ^ (keyData->p[17]);
 }
 
-void decrypt(KeyData* keyData, unsigned long *l, unsigned long *r) {
+void decrypt(KeyData* keyData, ul *l, ul *r) {
 	int i, a;
 	*l = (*l) ^ (keyData->p[17]);
 	*r = (*r) ^ (keyData->p[16]);
@@ -322,7 +324,7 @@ void decrypt(KeyData* keyData, unsigned long *l, unsigned long *r) {
 int initBlowfish(KeyData *keyData, unsigned char* key, int keySize) {
 	int i, j, k;
 	unsigned int d;
-	unsigned long l = 0x000000000, r = 0x000000000;
+	ul l = 0x000000000, r = 0x000000000;
 	for (i = 0; i < 18; i++)
 		keyData->p[i] = INITIAL_P[i];
 	j = 0;
@@ -355,19 +357,19 @@ int initBlowfish(KeyData *keyData, unsigned char* key, int keySize) {
 	return 123; //FIXME
 }
 
-void initKeysData(KeyData *key) {
+void initKeysData(KeyData **pkey) {
 	unsigned char *subkey = (unsigned char*) malloc(530 * sizeof(unsigned char));
 	int i = 0, j, intToChar;
 	int keyLength;
 	scanf("%d", &keyLength);
 
-	key = (KeyData*) malloc(sizeof(KeyData) * 1);
+	*pkey = (KeyData*) malloc(sizeof(KeyData) * 1);
 
 	for (j = 0; j < keyLength; j++) {
 		scanf("%d", &intToChar);
 		subkey[j] = (char) intToChar;
 	}
-	initBlowfish(key, subkey,keyLength);
+	initBlowfish(*pkey, subkey,keyLength);
 
 }
 
@@ -375,7 +377,7 @@ void EncryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 	int j, k, it;
 	int n = 1000;
 	unsigned int *l = (unsigned int*)malloc(sizeof(unsigned int) * (n + 1));
-	unsigned long ll, lr;
+	ul ll, lr;
 	while (1) {
 		j = 0;
 		k = 0;
@@ -390,8 +392,8 @@ void EncryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 		 * TO MUSISZ NAPISAC LICZENIE TEGO CO JEST W BUFORZE
 		 * */
 		for (it = 0; it < 1000; it += 2) {
-			ll = (unsigned long) l[it];
-			lr = (unsigned long) l[it + 1];
+			ll = (ul) l[it];
+			lr = (ul) l[it + 1];
 			encrypt(key, &ll, &lr);
 			l[it] = (unsigned int) ll;
 			l[it + 1] = (unsigned int) lr;
@@ -405,8 +407,8 @@ void EncryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 
 		if (j != 4 * n) {
 
-			ll = (unsigned long) (j);
-			lr = (unsigned long) (0);
+			ll = (ul) (j);
+			lr = (ul) (0);
 			encrypt(key, &ll, &lr);
 			l[0] = (unsigned int) ll;
 			l[1] = (unsigned int) lr;
@@ -425,7 +427,7 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 
 	unsigned int *l = (unsigned int *)malloc(sizeof(unsigned int) * (n + 1));
 	unsigned int *l1 =(unsigned int *) malloc(sizeof(unsigned int) * (n + 1));
-	unsigned long ll, lr;
+	ul ll, lr;
 	j = 0;
 	if ((j = fread(l, sizeof(unsigned char), 4 * n, dataFile)) != 4 * n) {
 		if (ferror(dataFile) != 0) {
@@ -438,8 +440,8 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 	 * TO MUSISZ NAPISAC LICZENIE TEGO CO JEST W BUFORZE
 	 * */
 	for (it = 0; it < n; it += 2) {
-		ll = (unsigned long) l[it];
-		lr = (unsigned long) l[it + 1];
+		ll = (ul) l[it];
+		lr = (ul) l[it + 1];
 		decrypt(key, &ll, &lr);
 		l1[it] = (unsigned int) ll;
 		l1[it + 1] = (unsigned int) lr;
@@ -458,8 +460,8 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 
 		if (j != 4 * n) {
 
-			ll = (unsigned long) l[0];
-			lr = (unsigned long) l[1];
+			ll = (ul) l[0];
+			lr = (ul) l[1];
 			decrypt(key, &ll, &lr);
 			l[0] = (unsigned int) ll;
 
@@ -481,8 +483,8 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 			 * TO MUSISZ NAPISAC LICZENIE TEGO CO JEST W BUFORZE
 			 * */
 			for (it = 0; it < n; it += 2) {
-				ll = (unsigned long) l[it];
-				lr = (unsigned long) l[it + 1];
+				ll = (ul) l[it];
+				lr = (ul) l[it + 1];
 				decrypt(key, &ll, &lr);
 				l1[it] = (unsigned int) ll;
 				l1[it + 1] = (unsigned int) lr;
@@ -493,32 +495,35 @@ void DecryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 	}
 }
 
-void showErrAndQuit(const char *s) {
+# define showErrAndQuit(msg) __showErrAndQuit(msg, __LINE__);
+
+void __showErrAndQuit(const char *s, int lineNum) {
+	printf("line: %i\t", lineNum);
 	printf(s);
+	printf("\n");
 	exit(1);
 }
 
 int main(int argc, char* argv[]) {
-	int isDecryption = 0;
 	int nrOfKeys = 0;
 	KeyData *keys;
 
-	if (argc == 4)
-		isDecryption = 1;
 	if (!(argc == 3 || (argc == 4 && (!strcmp(argv[1], "-d")))))
 		showErrAndQuit(USAGE);
 
+	int isDecryption = (argc == 4) ? 1 : 0;
+
 	FILE* dataFile = fopen(argv[1 + isDecryption], "r");
+//	FILE* dataFile = fopen("g.py", "r");
 	if (dataFile == NULL)
 		showErrAndQuit(strerror(errno));
 
-	// Inicjalizuje sboxy i p-tablice dla kazdego klucza
-	initKeysData(keys);
+	initKeysData(&keys);
 
 	FILE* output = fopen(argv[2 + isDecryption], "w+");
+//	FILE* output = fopen("encrypted", "w+");
 	if (output == NULL)
 		showErrAndQuit(strerror(errno));
-	// Wykonuje Szyfrowanie dla kazdego klucza
 	if (!isDecryption)
 		EncryptFile(dataFile, output, keys);
 	else
