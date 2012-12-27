@@ -2,16 +2,20 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
+#include "headers.h"
 
 #define USAGE \
 	"Usage: \n" \
 	"./blowfish plaintext.in ciphertext.out < KeyFile.in \n" \
 	"./blowfish -d ciphertext.in plaintext.out < KeyFile.in \n"
 
-typedef unsigned long ulon;
-typedef unsigned int uint;
+void __showErrAndQuit(const char *s, int lineNum) {
+	printf("line: %i\t", lineNum);
+	printf("%s\n", s);
+	exit(1);
+}
 
-const ulon INITIAL_P[16 + 2] = {
+const ulong INITIAL_P[16 + 2] = {
         0x243F6A88L, 0x85A308D3L, 0x13198A2EL, 0x03707344L,
         0xA4093822L, 0x299F31D0L, 0x082EFA98L, 0xEC4E6C89L,
         0x452821E6L, 0x38D01377L, 0xBE5466CFL, 0x34E90C6CL,
@@ -19,7 +23,7 @@ const ulon INITIAL_P[16 + 2] = {
         0x9216D5D9L, 0x8979FB1BL
 };
 
-const ulon INITIAL_Sbox[4][256] = {
+const ulong INITIAL_Sbox[4][256] = {
     {   0xD1310BA6L, 0x98DFB5ACL, 0x2FFD72DBL, 0xD01ADFB7L,
         0xB8E1AFEDL, 0x6A267E96L, 0xBA7C9045L, 0xF12C7F99L,
         0x24A19947L, 0xB3916CF7L, 0x0801F2E2L, 0x858EFC16L,
@@ -278,41 +282,13 @@ const ulon INITIAL_Sbox[4][256] = {
         0xB74E6132L, 0xCE77E25BL, 0x578FDFE3L, 0x3AC372E6L  }
 };
 
-# define showErrAndQuit(msg) __showErrAndQuit(msg, __LINE__);
-
-void __showErrAndQuit(const char *s, int lineNum) {
-	printf("line: %i\t", lineNum);
-	printf("%s\n", s);
-	exit(1);
-}
-
-/**
- * This macro checks return value of the CUDA runtime call and exits
- * the application if the call failed.
- */
-#define CUDA_CHECK_RETURN(value) {											\
-	cudaError_t _m_cudaStat = value;										\
-	if (_m_cudaStat != cudaSuccess) {										\
-		fprintf(stderr, "Error %s at line %d in file %s\n",					\
-				cudaGetErrorString(_m_cudaStat), __LINE__, __FILE__);		\
-		exit(1);															\
-	} }
-
-// FIXME FIXME FIXME : works for 1e3, doesn't for 1e5
-const int N = 1e3;		// FIXME FIXME : rename, God Damn it! BUFFER_SIZE ? FILE_PART_SIZE ? anything but N ...
-
-typedef struct {
-	ulon sbox[4][256];
-	ulon p[18];
-} KeyData;
-
-ulon F(const KeyData*const keyData, ulon a) {
-	ulon FF = 0xFFL;
+ulong F(const KeyData* const keyData, ulong a) {
+	ulong FF = 0xFFL;
 	return ((keyData->sbox[0][(a >> 24) & FF] + keyData->sbox[1][(a >> 16) & FF]) ^ (keyData->sbox[2][(a >> 8) & FF]))
 			+ keyData->sbox[3][(a) & FF];
 }
 
-void encrypt(const KeyData*const keyData, ulon *l, ulon *r) {
+void encryptBlock(const KeyData* const keyData, ulong *l, ulong *r) {
 	int a;
 	for (int i = 0; i < 16; ++i) {
 		*l = (*l) ^ (keyData->p[i]);
@@ -328,27 +304,125 @@ void encrypt(const KeyData*const keyData, ulon *l, ulon *r) {
 	*l = (*l) ^ (keyData->p[17]);
 }
 
-void decrypt(const KeyData* const keyData, ulon *l, ulon *r) {
-	int i, a;
+void decryptBlock(const KeyData* const keyData, ulong *l, ulong *r) {
+	int a;
 	*l = (*l) ^ (keyData->p[17]);
 	*r = (*r) ^ (keyData->p[16]);
 	a = *l;
 	*l = *r;
 	*r = a;
-	for (i = 15; i >= 0; --i) {
+	for (int i = 15; i >= 0; --i) {
 		a = *l;
 		*l = *r;
 		*r = a;
 		*r = F(keyData, *l) ^ (*r);
 		*l = (*l) ^ (keyData->p[i]);
-
 	}
 }
 
-void initBlowfish(KeyData *keyData, unsigned char* key, int keySize) {
+void encryptFile(FILE* dataFile, FILE* output, KeyData *key) {
+	int j;
+	uint *buffer = (uint*) malloc(sizeof(uint) * (FILE_PART_SIZE));	// FILE_PART_SIZE + 1   or   FILE_PART_SIZE
+	ulong ll, lr;
+	while (1) {
+		j = 0;
+
+		if ((j = fread(buffer, sizeof(uchar), 4 * FILE_PART_SIZE, dataFile)) != 4 * FILE_PART_SIZE) {
+			if (ferror(dataFile) != 0)
+				showErrAndQuit(strerror(errno));
+		}
+
+		cudaEncryptBuffer(buffer, buffer);
+//				for (int it = 0; it < FILE_PART_SIZE; it += 2) {
+//					ll = (ulong) buffer[it];
+//					lr = (ulong) buffer[it + 1];
+//					encryptBlock(key, &ll, &lr);
+//					buffer[it] = (uint) ll;
+//					buffer[it + 1] = (uint) lr;
+//				}
+
+		if ((fwrite(buffer, sizeof(uchar), 4 * FILE_PART_SIZE, output)) != 4 * FILE_PART_SIZE)
+			showErrAndQuit(strerror(errno));
+
+		if (j != 4 * FILE_PART_SIZE) {
+			ll = (ulong) (j);
+			lr = (ulong) (0);
+			encryptBlock(key, &ll, &lr);
+			buffer[0] = (uint) ll;
+			buffer[1] = (uint) lr;
+
+			if ((fwrite(buffer, sizeof(uchar), 8, output)) != 8)
+				showErrAndQuit(strerror(errno));
+			break;
+		}
+	}
+	free(buffer);
+}
+
+void decryptdFile(FILE* dataFile, FILE* output, KeyData *key) {
+	int j;
+
+	uint *bufferIn = (uint *) malloc(sizeof(uint) * (FILE_PART_SIZE));		// FILE_PART_SIZE + 1   or   FILE_PART_SIZE
+	uint *bufferOut = (uint *) malloc(sizeof(uint) * (FILE_PART_SIZE));	// FILE_PART_SIZE + 1   or   FILE_PART_SIZE
+	ulong ll, lr;
+	j = 0;
+	if ((j = fread(bufferIn, sizeof(uchar), 4 * FILE_PART_SIZE, dataFile)) != 4 * FILE_PART_SIZE) {
+		if (ferror(dataFile) != 0)
+			showErrAndQuit(strerror(errno));
+	}
+
+//	cudaDecryptBuffer(bufferIn, bufferOut);		// FIXME
+	for (int it = 0; it < FILE_PART_SIZE; it += 2) {
+		ll = (ulong) bufferIn[it];
+		lr = (ulong) bufferIn[it + 1];
+		decryptBlock(key, &ll, &lr);
+		bufferOut[it] = (uint) ll;
+		bufferOut[it + 1] = (uint) lr;
+	}
+
+	while (1) {
+		j = 0;
+		if ((j = fread(bufferIn, sizeof(uchar), 4 * FILE_PART_SIZE, dataFile)) != 4 * FILE_PART_SIZE) {
+			if (ferror(dataFile) != 0)
+				showErrAndQuit(strerror(errno));
+		}
+
+		if (j != 4 * FILE_PART_SIZE) {
+
+			ll = (ulong) bufferIn[0];
+			lr = (ulong) bufferIn[1];
+			decryptBlock(key, &ll, &lr);
+			bufferIn[0] = (uint) ll;
+
+			if ((fwrite(bufferOut, sizeof(uchar), bufferIn[0], output)) != bufferIn[0]) {
+				if (ferror(dataFile) != 0)
+					showErrAndQuit(strerror(errno));
+			}
+			break;
+		} else {
+			if ((fwrite(bufferOut, sizeof(uchar), 4 * FILE_PART_SIZE, output)) != 4 * FILE_PART_SIZE) {
+				if (ferror(dataFile) != 0)
+					showErrAndQuit(strerror(errno));
+			}
+
+//			cudaDecryptBuffer(bufferIn, bufferOut);  // FIXME
+			for (int it = 0; it < FILE_PART_SIZE; it += 2) {
+				ll = (ulong) bufferIn[it];
+				lr = (ulong) bufferIn[it + 1];
+				decryptBlock(key, &ll, &lr);
+				bufferOut[it] = (uint) ll;
+				bufferOut[it + 1] = (uint) lr;
+			}
+		}
+	}
+	free(bufferIn);
+	free(bufferOut);
+}
+
+void initBlowfish(KeyData *keyData, const uchar* const key, const int keyLength) {
 	int i, j, k;
 	unsigned int d;
-	ulon l = 0x000000000, r = 0x000000000;
+	ulong l = 0x000000000, r = 0x000000000;
 	for (i = 0; i < 18; i++)
 		keyData->p[i] = INITIAL_P[i];
 	j = 0;
@@ -357,7 +431,7 @@ void initBlowfish(KeyData *keyData, unsigned char* key, int keySize) {
 		for (k = 0; k < 4; k++) {
 			d = (d << 8) | key[j];
 			j++;
-			if (j == keySize)
+			if (j == keyLength)
 				j = 0;
 		}
 		keyData->p[i] ^= d;
@@ -367,135 +441,24 @@ void initBlowfish(KeyData *keyData, unsigned char* key, int keySize) {
 		for (j = 0; j < 256; j++)
 			keyData->sbox[i][j] = INITIAL_Sbox[i][j];
 	for (i = 0; i < 18; i += 2) {
-		encrypt(keyData, &l, &r);
+		encryptBlock(keyData, &l, &r);
 		keyData->p[i] = l;
 		keyData->p[i + 1] = r;
 	}
 	for (i = 0; i < 4; i++)
 		for (j = 0; j < 256; j += 2) {
-			encrypt(keyData, &l, &r);
+			encryptBlock(keyData, &l, &r);
 			keyData->sbox[i][j] = l;
 			keyData->sbox[i][j + 1] = r;
 		}
 }
 
-void cudaEncryptBuffer(const KeyData * const key, uint * const buffer) {
-	ulon ll, lr;
-	for (int it = 0; it < 1000; it += 2) {
-		ll = (ulon) buffer[it];
-		lr = (ulon) buffer[it + 1];
-		encrypt(key, &ll, &lr);
-		buffer[it] = (uint) ll;
-		buffer[it + 1] = (uint) lr;
-	}
-}
-
-void encryptFile(FILE* dataFile, FILE* output, KeyData *key) {
-	int j;
-	uint *buffer = (uint*) malloc(sizeof(uint) * (N + 1));
-	ulon ll, lr;
-	while (1) {
-		j = 0;
-
-		if ((j = fread(buffer, sizeof(unsigned char), 4 * N, dataFile)) != 4 * N) {
-			if (ferror(dataFile) != 0)
-				showErrAndQuit(strerror(errno));
-		}
-
-		/***************************************************************
-		 * TO MUSISZ NAPISAC LICZENIE TEGO CO JEST W BUFORZE
-		 * */
-		cudaEncryptBuffer(key, buffer);
-		/***************************************************************/
-
-		if ((fwrite(buffer, sizeof(unsigned char), 4 * N, output)) != 4 * N)
-			showErrAndQuit(strerror(errno));
-
-		if (j != 4 * N) {
-
-			ll = (ulon) (j);
-			lr = (ulon) (0);
-			encrypt(key, &ll, &lr);
-			buffer[0] = (uint) ll;
-			buffer[1] = (uint) lr;
-
-			if ((fwrite(buffer, sizeof(unsigned char), 8, output)) != 8)
-				showErrAndQuit(strerror(errno));
-			break;
-		}
-	}
-}
-
-void decryptdFile(FILE* dataFile, FILE* output, KeyData *key) {
-	int j;
-
-	uint *buffer = (uint *) malloc(sizeof(uint) * (N + 1));
-	uint *l1 = (uint *) malloc(sizeof(uint) * (N + 1));
-	ulon ll, lr;
-	j = 0;
-	if ((j = fread(buffer, sizeof(unsigned char), 4 * N, dataFile)) != 4 * N) {
-		if (ferror(dataFile) != 0)
-			showErrAndQuit(strerror(errno));
-	}
-
-	/***************************************************************
-	 * TO MUSISZ NAPISAC LICZENIE TEGO CO JEST W BUFORZE
-	 * */
-	for (int it = 0; it < N; it += 2) {
-		ll = (ulon) buffer[it];
-		lr = (ulon) buffer[it + 1];
-		decrypt(key, &ll, &lr);
-		l1[it] = (uint) ll;
-		l1[it + 1] = (uint) lr;
-	}
-	/***************************************************************/
-
-	while (1) {
-		j = 0;
-		if ((j = fread(buffer, sizeof(unsigned char), 4 * N, dataFile)) != 4 * N) {
-			if (ferror(dataFile) != 0)
-				showErrAndQuit(strerror(errno));
-		}
-
-		if (j != 4 * N) {
-
-			ll = (ulon) buffer[0];
-			lr = (ulon) buffer[1];
-			decrypt(key, &ll, &lr);
-			buffer[0] = (uint) ll;
-
-			if ((fwrite(l1, sizeof(unsigned char), buffer[0], output)) != buffer[0]) {
-				if (ferror(dataFile) != 0)
-					showErrAndQuit(strerror(errno));
-			}
-			break;
-		} else {
-			if ((fwrite(l1, sizeof(unsigned char), 4 * N, output)) != 4 * N) {
-				if (ferror(dataFile) != 0)
-					showErrAndQuit(strerror(errno));
-			}
-			/***************************************************************
-			 * TO MUSISZ NAPISAC LICZENIE TEGO CO JEST W BUFORZE
-			 * */
-			for (int it = 0; it < N; it += 2) {
-				ll = (ulon) buffer[it];
-				lr = (ulon) buffer[it + 1];
-				decrypt(key, &ll, &lr);
-				l1[it] = (uint) ll;
-				l1[it + 1] = (uint) lr;
-			}
-			/***************************************************************/
-		}
-
-	}
-}
-
 void initKeysData(KeyData **pkey) {
-	unsigned char *subkey = (unsigned char*) malloc(530 * sizeof(unsigned char));
+	uchar *subkey = (uchar*) malloc(530 * sizeof(uchar));
 	int keyLength;
 	scanf("%d", &keyLength);
 
-	*pkey = (KeyData*) malloc(sizeof(KeyData) * 1);
+	*pkey = (KeyData*) malloc(sizeof(KeyData));
 
 	int intToChar;
 	for (int i = 0; i < keyLength; i++) {
@@ -503,6 +466,7 @@ void initKeysData(KeyData **pkey) {
 		subkey[i] = (char) intToChar;
 	}
 	initBlowfish(*pkey, subkey, keyLength);
+	free(subkey);
 }
 
 int main(int argc, char* argv[]) {
@@ -513,21 +477,24 @@ int main(int argc, char* argv[]) {
 
 	int isDecryption = (argc == 4) ? 1 : 0;
 
-	FILE* input = fopen(argv[1 + isDecryption], "r"); //	FILE* dataFile = fopen("g.py", "r");
+	FILE* input = fopen(argv[1 + isDecryption], "r");
 	if (input == NULL)
 		showErrAndQuit(strerror(errno));
 
-	FILE* output = fopen(argv[2 + isDecryption], "w+"); //	FILE* output = fopen("encrypted", "w+");
+	FILE* output = fopen(argv[2 + isDecryption], "w+");
 	if (output == NULL)
 		showErrAndQuit(strerror(errno));
 
 	//////////////////////////////
 	initKeysData(&key);
+	cudaInit(FILE_PART_SIZE, key);
 
 	if (!isDecryption)
 		encryptFile(input, output, key);
 	else
 		decryptdFile(input, output, key);
+	//////////////////////////////
+	free(key);
 	//////////////////////////////
 
 	if (fclose(output) == EOF)
