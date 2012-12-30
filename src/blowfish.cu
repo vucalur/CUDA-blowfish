@@ -4,15 +4,21 @@
 #include <string.h>
 #include "headers.h"
 
+// FIXME : update
 #define USAGE \
 	"Usage: \n" \
 	"./blowfish plaintext.in ciphertext.out < KeyFile.in \n" \
 	"./blowfish -d ciphertext.in plaintext.out < KeyFile.in \n"
 
-void __showErrAndQuit(const char *s, int lineNum) {
+void __showErrAndQuit(const char *msg, int lineNum) {
 	printf("line: %i\t", lineNum);
-	printf("%s\n", s);
-	exit(1);
+	printf("%s\n", msg);
+	exit(EXIT_FAILURE);
+}
+
+void showCommunicateAndQuit(const char *msg) {
+	printf("%s\n", msg);
+	exit(EXIT_FAILURE);
 }
 
 const ulong INITIAL_P[16 + 2] = {
@@ -282,6 +288,20 @@ const ulong INITIAL_Sbox[4][256] = {
         0xB74E6132L, 0xCE77E25BL, 0x578FDFE3L, 0x3AC372E6L  }
 };
 
+static clock_t start, stop;
+static double cpuTimeSeconds;
+
+void cpuInit() {
+	cpuTimeSeconds = 0;	// explicitly
+}
+
+void cpuPrintStats(int verbose) {
+	printf("%f ms\n", cpuTimeSeconds * 1000);
+}
+
+// MUST BE DIVISIBLE BY 2 !!!
+static int filePartSize = 2e6;
+
 ulong F(const KeyData* const keyData, ulong a) {
 	ulong FF = 0xFFL;
 	return ((keyData->sbox[0][(a >> 24) & FF] + keyData->sbox[1][(a >> 16) & FF]) ^ (keyData->sbox[2][(a >> 8) & FF]))
@@ -320,31 +340,44 @@ void decryptBlock(const KeyData* const keyData, ulong *l, ulong *r) {
 	}
 }
 
-void encryptFile(FILE* dataFile, FILE* output, KeyData *key) {
+void encryptFile(FILE* dataFile, FILE* output, KeyData *key, const int computeOnCuda) {
 	int j;
-	uint *buffer = (uint*) malloc(sizeof(uint) * (FILE_PART_SIZE));	// FILE_PART_SIZE + 1   or   FILE_PART_SIZE
+	uint *buffer = (uint*) malloc(sizeof(uint) * (filePartSize)); // FILE_PART_SIZE + 1   or   FILE_PART_SIZE
 	ulong ll, lr;
 	while (1) {
 		j = 0;
 
-		if ((j = fread(buffer, sizeof(uchar), 4 * FILE_PART_SIZE, dataFile)) != 4 * FILE_PART_SIZE) {
+		if ((j = fread(buffer, sizeof(uchar), 4 * filePartSize, dataFile)) != 4 * filePartSize) {
 			if (ferror(dataFile) != 0)
 				showErrAndQuit(strerror(errno));
 		}
 
-		cudaEncryptBuffer(buffer, buffer);
-//				for (int it = 0; it < FILE_PART_SIZE; it += 2) {
-//					ll = (ulong) buffer[it];
-//					lr = (ulong) buffer[it + 1];
-//					encryptBlock(key, &ll, &lr);
-//					buffer[it] = (uint) ll;
-//					buffer[it + 1] = (uint) lr;
-//				}
+		if (computeOnCuda) {
+			start = clock();
 
-		if ((fwrite(buffer, sizeof(uchar), 4 * FILE_PART_SIZE, output)) != 4 * FILE_PART_SIZE)
+			cudaEncryptBuffer(buffer, buffer);
+
+			stop = clock();
+			cpuTimeSeconds += (double (stop - start)) / CLOCKS_PER_SEC;
+		} else {
+			start = clock();
+
+			for (int it = 0; it < filePartSize; it += 2) {
+				ll = (ulong) buffer[it];
+				lr = (ulong) buffer[it + 1];
+				encryptBlock(key, &ll, &lr);
+				buffer[it] = (uint) ll;
+				buffer[it + 1] = (uint) lr;
+			}
+
+			stop = clock();
+			cpuTimeSeconds += (double (stop - start)) / CLOCKS_PER_SEC;
+		}
+
+		if ((fwrite(buffer, sizeof(uchar), 4 * filePartSize, output)) != 4 * filePartSize)
 			showErrAndQuit(strerror(errno));
 
-		if (j != 4 * FILE_PART_SIZE) {
+		if (j != 4 * filePartSize) {
 			ll = (ulong) (j);
 			lr = (ulong) (0);
 			encryptBlock(key, &ll, &lr);
@@ -359,35 +392,43 @@ void encryptFile(FILE* dataFile, FILE* output, KeyData *key) {
 	free(buffer);
 }
 
-void decryptdFile(FILE* dataFile, FILE* output, KeyData *key) {
+void decryptdFile(FILE* dataFile, FILE* output, KeyData *key, const int computeOnCuda) {
 	int j;
 
-	uint *bufferIn = (uint *) malloc(sizeof(uint) * (FILE_PART_SIZE));		// FILE_PART_SIZE + 1   or   FILE_PART_SIZE
-	uint *bufferOut = (uint *) malloc(sizeof(uint) * (FILE_PART_SIZE));	// FILE_PART_SIZE + 1   or   FILE_PART_SIZE
+	uint *bufferIn = (uint *) malloc(sizeof(uint) * (filePartSize)); // FILE_PART_SIZE + 1   or   FILE_PART_SIZE ?
+	uint *bufferOut = (uint *) malloc(sizeof(uint) * (filePartSize)); // FILE_PART_SIZE + 1   or   FILE_PART_SIZE ?
 	ulong ll, lr;
 	j = 0;
-	if ((j = fread(bufferIn, sizeof(uchar), 4 * FILE_PART_SIZE, dataFile)) != 4 * FILE_PART_SIZE) {
+	if ((j = fread(bufferIn, sizeof(uchar), 4 * filePartSize, dataFile)) != 4 * filePartSize) {
 		if (ferror(dataFile) != 0)
 			showErrAndQuit(strerror(errno));
 	}
 
-//	cudaDecryptBuffer(bufferIn, bufferOut);		// FIXME
-	for (int it = 0; it < FILE_PART_SIZE; it += 2) {
-		ll = (ulong) bufferIn[it];
-		lr = (ulong) bufferIn[it + 1];
-		decryptBlock(key, &ll, &lr);
-		bufferOut[it] = (uint) ll;
-		bufferOut[it + 1] = (uint) lr;
+	if (computeOnCuda) {
+		cudaDecryptBuffer(bufferIn, bufferOut);
+	} else {
+		start = clock();
+
+		for (int it = 0; it < filePartSize; it += 2) {
+			ll = (ulong) bufferIn[it];
+			lr = (ulong) bufferIn[it + 1];
+			decryptBlock(key, &ll, &lr);
+			bufferOut[it] = (uint) ll;
+			bufferOut[it + 1] = (uint) lr;
+		}
+
+		stop = clock();
+		cpuTimeSeconds += (double(stop - start)) / CLOCKS_PER_SEC;
 	}
 
 	while (1) {
 		j = 0;
-		if ((j = fread(bufferIn, sizeof(uchar), 4 * FILE_PART_SIZE, dataFile)) != 4 * FILE_PART_SIZE) {
+		if ((j = fread(bufferIn, sizeof(uchar), 4 * filePartSize, dataFile)) != 4 * filePartSize) {
 			if (ferror(dataFile) != 0)
 				showErrAndQuit(strerror(errno));
 		}
 
-		if (j != 4 * FILE_PART_SIZE) {
+		if (j != 4 * filePartSize) {
 
 			ll = (ulong) bufferIn[0];
 			lr = (ulong) bufferIn[1];
@@ -400,18 +441,26 @@ void decryptdFile(FILE* dataFile, FILE* output, KeyData *key) {
 			}
 			break;
 		} else {
-			if ((fwrite(bufferOut, sizeof(uchar), 4 * FILE_PART_SIZE, output)) != 4 * FILE_PART_SIZE) {
+			if ((fwrite(bufferOut, sizeof(uchar), 4 * filePartSize, output)) != 4 * filePartSize) {
 				if (ferror(dataFile) != 0)
 					showErrAndQuit(strerror(errno));
 			}
 
-//			cudaDecryptBuffer(bufferIn, bufferOut);  // FIXME
-			for (int it = 0; it < FILE_PART_SIZE; it += 2) {
-				ll = (ulong) bufferIn[it];
-				lr = (ulong) bufferIn[it + 1];
-				decryptBlock(key, &ll, &lr);
-				bufferOut[it] = (uint) ll;
-				bufferOut[it + 1] = (uint) lr;
+			if (computeOnCuda) {
+				cudaDecryptBuffer(bufferIn, bufferOut);
+			} else {
+				start = clock();
+
+				for (int it = 0; it < filePartSize; it += 2) {
+					ll = (ulong) bufferIn[it];
+					lr = (ulong) bufferIn[it + 1];
+					decryptBlock(key, &ll, &lr);
+					bufferOut[it] = (uint) ll;
+					bufferOut[it + 1] = (uint) lr;
+				}
+
+				stop = clock();
+				cpuTimeSeconds += (double(stop - start)) / CLOCKS_PER_SEC;
 			}
 		}
 	}
@@ -471,28 +520,75 @@ void initKeysData(KeyData **pkey) {
 
 int main(int argc, char* argv[]) {
 	KeyData *key;
+	int isDecryption = 0;
+	int printReports = 0;
+	int verbose = 0;
+	int computeOnCuda = 0;
+	int ePT = 500;
 
-	if (!(argc == 3 || (argc == 4 && (!strcmp(argv[1], "-d")))))
+	struct option longOptions[] = {
+		{"decrypt",		no_argument,		0, 'd'},
+		{"cuda",		no_argument,		0, 'c'},
+		{"report",		no_argument,		0, 'r'},
+		{"verbose",		no_argument,		0, 'v'},
+		{"fPS",			required_argument,	0, 'f'},
+		{"ePT",			required_argument,	0, 'e'},
+		{0, 0, 0, 0}
+	};
+	/* getopt_long stores the option index here. */
+	int option_index = 0;
+	int opt;
+	while ((opt = getopt_long(argc, argv, "dcrvf:e:", longOptions, &option_index)) != -1) {
+		switch (opt) {
+		case 'd':
+			isDecryption = 1;
+			break;
+		case 'c':
+			computeOnCuda = 1;
+			break;
+		case 'r':
+			printReports = 1;
+			break;
+		case 'v':
+			verbose = 1;
+			break;
+		case 'f':
+			filePartSize = atoi(optarg);
+			break;
+		case 'e':
+			ePT = atoi(optarg);
+			break;
+		case '?':
+			/* getopt_long already printed an error message. */
+			break;
+		default:
+			showErrAndQuit(USAGE);
+			/* no break */
+		}
+	}
+
+	if (optind + 1 >= argc)
 		showErrAndQuit(USAGE);
 
-	int isDecryption = (argc == 4) ? 1 : 0;
-
-	FILE* input = fopen(argv[1 + isDecryption], "r");
+	FILE* input = fopen(argv[optind], "r");
 	if (input == NULL)
 		showErrAndQuit(strerror(errno));
 
-	FILE* output = fopen(argv[2 + isDecryption], "w+");
+	FILE* output = fopen(argv[optind + 1], "w+");
 	if (output == NULL)
 		showErrAndQuit(strerror(errno));
 
 	//////////////////////////////
 	initKeysData(&key);
-	cudaInit(FILE_PART_SIZE, key);
+	if (computeOnCuda)
+		cudaInit(filePartSize, key, ePT);
+	else
+		cpuInit();
 
 	if (!isDecryption)
-		encryptFile(input, output, key);
+		encryptFile(input, output, key, computeOnCuda);
 	else
-		decryptdFile(input, output, key);
+		decryptdFile(input, output, key, computeOnCuda);
 	//////////////////////////////
 	free(key);
 	//////////////////////////////
@@ -502,5 +598,14 @@ int main(int argc, char* argv[]) {
 	if (fclose(input) == EOF)
 		showErrAndQuit(strerror(errno));
 
-	return 0;
+	if (printReports) {
+		if (computeOnCuda) {
+			cudaPrintStats(verbose);
+			cpuPrintStats(verbose);
+		} else {
+			cpuPrintStats(verbose);
+		}
+	}
+
+	return EXIT_SUCCESS;
 }

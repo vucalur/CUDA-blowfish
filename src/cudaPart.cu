@@ -2,40 +2,80 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-const int THREADS_PER_BLOCK = 10;
-const int BLOCKS_COUNT = 250;
-//__constant__ static int constant_elementsNumberDiv2;
-//__constant__ static int constant_elementsDiv2PerBlock;
-//__constant__ static int constant_elementsDiv2PerThread;
-
+__constant__ static int c_eN;
+__constant__ static int c_tPB;
+__constant__ static int c_ePT;
 __constant__     static KeyData constant_key;
 
-void cudaInit(const int elementsNumber, const KeyData * key) {
-//	int *pelementsNumber;
-//	int *pelementsDiv2PerBlock;
-//	int *pelementsDiv2PerThread;
-//	pelementsNumber = (int *) malloc(sizeof(int));
-//	pelementsDiv2PerBlock =(int *)  malloc(sizeof(int));
-//	pelementsDiv2PerThread= (int *) malloc(sizeof(int));
-//	int elementsDiv2PerBlock = (elementsNumber / 2 + BLOCKS_COUNT - 1) / BLOCKS_COUNT;
-//	int elementsDiv2PerThread = (elementsDiv2PerBlock + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-//	*pelementsNumber = elementsNumber;
-//	*pelementsDiv2PerBlock = elementsDiv2PerBlock;
-//	*pelementsDiv2PerThread= elementsDiv2PerThread;
+static int filePartSize;
+static int eN; // elementsNumber, element == 2 array cells
+static const int mTPB = 512; // maxThreadsPerBlock
+static const int mBC = 512; // maxBlocksCount
+
+static int ePT = 500; // elementsPerThread	ADJUSTABLE
+
+static int tTN; // totalThreadsNeeded
+static int bC; // blocks Count CALCULATED: min possible
+static int tPB; // threads Per Block CALCULATED: max possible
+
+static double kernelTime;
+static cudaEvent_t start, stop;
+
+
+void cudaInit(const int _filePartSize, const KeyData * key, const int ePT) {
+	filePartSize = _filePartSize;
+	if (filePartSize % 2 != 0) {
+		char communicate[200];
+		sprintf(communicate,
+				"Unable to execute CUDA kernel launch with:\n"
+				"fPS %d\nePT %d\nbC %d\ntPB %d\n"
+				"filePartSize must be divisible by 2",
+				filePartSize, ePT, bC, tPB);
+		showErrAndQuit(communicate);
+	}
+	eN = filePartSize / 2;
+	tTN = (eN + ePT - 1) / ePT; // totalThreadsNeeded
+	bC = (tTN + mTPB - 1) / mTPB; // blocks Count CALCULATED: min possible
+	tPB = (tTN + bC - 1) / bC; // threads Per Block CALCULATED: max possible
+
+	if (bC > mBC) {
+		char communicate[200];
+		sprintf(communicate, "Unable to execute CUDA kernel launch with:\n"
+				"fPS %d\nePT %d\nbC %d\ntPB %d\n"
+				"Total threads needed exceeds maximum available (512^2)",
+				filePartSize, ePT, bC, tPB);
+		showErrAndQuit(communicate);
+	}
 
 	cudaMemcpyToSymbol(constant_key, key, sizeof(KeyData));
-//	cudaMemcpyToSymbol(constant_elementsNumberDiv2, &elementsNumber, sizeof(int));
-//	cudaMemcpyToSymbol(constant_elementsDiv2PerThread, &elementsDiv2PerThread, sizeof(int));
-//	cudaMemcpyToSymbol(constant_elementsDiv2PerBlock, &elementsDiv2PerBlock, sizeof(int));
-//	cudaMemcpyToSymbol(constant_elementsNumberDiv2, pelementsNumber, sizeof(int));
-//	cudaMemcpyToSymbol(constant_elementsDiv2PerThread, pelementsDiv2PerThread, sizeof(int));
-//	cudaMemcpyToSymbol(constant_elementsDiv2PerBlock, pelementsDiv2PerBlock, sizeof(int));
+	cudaMemcpyToSymbol(c_eN, &eN, sizeof(int));
+	cudaMemcpyToSymbol(c_tPB, &tPB, sizeof(int));
+	cudaMemcpyToSymbol(c_ePT, &ePT, sizeof(int));
+
+	cudaEventCreate(&start);
+	cudaEventCreate(&stop);
+	kernelTime = 0;	// explicitly
 }
 
-__device__ ulong d_F(ulong a) {
-	ulong FF = 0xFFL;
-	return ((constant_key.sbox[0][(a >> 24) & FF] + constant_key.sbox[1][(a >> 16) & FF])
-			^ (constant_key.sbox[2][(a >> 8) & FF])) + constant_key.sbox[3][(a) & FF];
+void cudaPrintStats(int verbose) {
+	cudaEventDestroy(start);
+	cudaEventDestroy(stop);
+	printf("%s%f ms\n", (verbose) ? "total CUDA kernel time:\t" : "", kernelTime);
+	if (verbose) {
+		printf("CUDA kernel launches parameters:\n"
+				"eN\t%d\n"
+				"ePT\t%d\n"
+				"tTN\t%d\n"
+				"bC\t%d\n"
+				"tPB\t%d\n",
+				eN, ePT, tTN, bC, tPB);
+	}
+}
+
+__device__  __inline__ ulong d_F(ulong a) {
+	//	ulong FF = 0xFFL; // introduced as hardcoded constant
+	return ((constant_key.sbox[0][(a >> 24) & 0xFFL] + constant_key.sbox[1][(a >> 16) & 0xFFL])
+			^ (constant_key.sbox[2][(a >> 8) & 0xFFL])) + constant_key.sbox[3][(a) & 0xFFL];
 }
 
 __device__ void d_encryptBlock(ulong *l, ulong *r) {
@@ -54,96 +94,28 @@ __device__ void d_encryptBlock(ulong *l, ulong *r) {
 	*l = (*l) ^ (constant_key.p[17]);
 }
 
-/*
- __device__ void d_decryptBlock(ulong *l, ulong *r) {
- int a;
- *l = (*l) ^ (constant_key.p[17]);
- *r = (*r) ^ (constant_key.p[16]);
- a = *l;
- *l = *r;
- *r = a;
- for (int i = 15; i >= 0; --i) {
- a = *l;
- *l = *r;
- *r = a;
- *r = d_F(con, *l) ^ (*r);
- *l = (*l) ^ (constant_key.p[i]);
- }
- }*/
+__device__ void d_decryptBlock(ulong *l, ulong *r) {
+	int a;
+	*l = (*l) ^ (constant_key.p[17]);
+	*r = (*r) ^ (constant_key.p[16]);
+	a = *l;
+	*l = *r;
+	*r = a;
+	for (int i = 15; i >= 0; --i) {
+		a = *l;
+		*l = *r;
+		*r = a;
+		*r = d_F(*l) ^ (*r);
+		*l = (*l) ^ (constant_key.p[i]);
+	}
+}
 
 __global__ void d_encryptBuffer(uint *buffer) {
 	ulong ll, lr;
-//	for (int i = constant_elementsDiv2PerBlock * blockIdx.x + constant_elementsDiv2PerThread * threadIdx.x;
-//			i < min(constant_elementsDiv2PerBlock * blockIdx.x + constant_elementsDiv2PerThread * (threadIdx.x + 1),
-//							constant_elementsNumberDiv2); ++i) {
-//		ll = (ulong) buffer[2 * i];
-//		lr = (ulong) buffer[2 * i + 1];
-//		d_encryptBlock(&ll, &lr);
-//		buffer[2 * i] = (uint) ll;
-//		buffer[2 * i + 1] = (uint) lr;
-//	}
 
-//	for (int i = FILE_PART_SIZE / 2 / BLOCKS_COUNT * blockIdx.x + (FILE_PART_SIZE / 2 + BLOCKS_COUNT - 1) / BLOCKS_COUNT / THREADS_PER_BLOCK  * threadIdx.x;
-//			i < min( FILE_PART_SIZE / 2 / BLOCKS_COUNT * blockIdx.x + (FILE_PART_SIZE / 2 + BLOCKS_COUNT - 1) / BLOCKS_COUNT / THREADS_PER_BLOCK * (threadIdx.x + 1),
-//					FILE_PART_SIZE /2 ); ++i) {
-//		ll = (ulong) buffer[2 * i];
-//		lr = (ulong) buffer[2 * i + 1];
-//		d_encryptBlock(&ll, &lr);
-//		buffer[2 * i] = (uint) ll;
-//		buffer[2 * i + 1] = (uint) lr;
-//	}
-
-//	for (int i = 200 * blockIdx.x + 40 * threadIdx.x;
-//			i < min(200 * blockIdx.x + 40 * (threadIdx.x + 1), FILE_PART_SIZE / 2); ++i) {
-//		ll = (ulong) buffer[2 * i];
-//		lr = (ulong) buffer[2 * i + 1];
-//		d_encryptBlock(&ll, &lr);
-//		buffer[2 * i] = (uint) ll;
-//		buffer[2 * i + 1] = (uint) lr;
-//	}
-
-//	for (int i = blockDim.x * blockIdx.x + 1000 * threadIdx.x;
-//			i
-//					< min(blockDim.x * blockIdx.x + 1000 * (threadIdx.x + 1),
-//							min(FILE_PART_SIZE / 2, blockDim.x * (blockIdx.x + 1))); ++i) {
-//		ll = (ulong) buffer[2 * i];
-//		lr = (ulong) buffer[2 * i + 1];
-//		d_encryptBlock(&ll, &lr);
-//		buffer[2 * i] = (uint) ll;
-//		buffer[2 * i + 1] = (uint) lr;
-//	}
-
-//	for (int i = 0; i < FILE_PART_SIZE / 2; ++i) {
-//		ll = (ulong) buffer[2 * i];
-//		lr = (ulong) buffer[2 * i + 1];
-//		d_encryptBlock(&ll, &lr);
-//		buffer[2 * i] = (uint) ll;
-//		buffer[2 * i + 1] = (uint) lr;
-//	}
-//	int eN = FILE_PART_SIZE / 2; // elementsNumber
-//	int mTPB = 256; // maxThreadsPerBlock
-//	// int mBC = 256; // maxBlocksCount
-//	int ePT = 1000; // elementsPerThread	ADJUSTABLE
-//
-//
-//	int tTN = (eN + ePT - 1) / ePT; // totalThreadsNeeded
-//
-//	int bC = (tTN + mTPB - 1) / mTPB; // CALCULATED: min possible
-//
-//	int tPB = (tTN + bC - 1) / bC; // CALCULATED: max possible
-
-
-//	for (int i = ePT * (tPB * blockIdx.x + threadIdx.x);
-//				i < ePT * (tPB * (blockIdx.x + 1) + threadIdx.x); ++i) {
-//	FILE_PART_SIZE:	1000000
-//	eN:	500000
-//	ePT:	100
-//	tTN:	5000
-//	bC:	20
-//	tPB:	250
-
-	int limit = 100 * (250 * blockIdx.x + threadIdx.x + 1);
-	for (int i = 100 * (250 * blockIdx.x + threadIdx.x); i < limit; ++i) {
+	//	const int limit = c_ePT * (c_tPB * blockIdx.x + threadIdx.x + 1);
+	for (int i = c_ePT * (c_tPB * blockIdx.x + threadIdx.x);
+			i < min(c_ePT * (c_tPB * blockIdx.x + threadIdx.x + 1), c_eN); ++i) {
 		ll = (ulong) buffer[2 * i];
 		lr = (ulong) buffer[2 * i + 1];
 		d_encryptBlock(&ll, &lr);
@@ -152,43 +124,62 @@ __global__ void d_encryptBuffer(uint *buffer) {
 	}
 }
 
-void cudaEncryptBuffer(const uint * const bufferIn, uint * const bufferOut) {
-	// WARNING: doesn't work this way:
-	//	static int initialised = 0;
-	uint * d_buffer = NULL;
-//	if (initialised == 0) {
-//		initialised = 1;
-	CUDA_CHECK_RETURN(cudaMalloc((void**) &d_buffer, sizeof(uint) * FILE_PART_SIZE));
-//	}
-	CUDA_CHECK_RETURN(cudaMemcpy(d_buffer, bufferIn, sizeof(uint) * FILE_PART_SIZE, cudaMemcpyHostToDevice));
+__global__ void d_decryptBuffer(uint *buffer) {
+	ulong ll, lr;
 
-//	int threadsPerBlock = 256;
-//	int elemsPerThread = 1000;
-//	int blocksPerGrid = 200; // (FILE_PART_SIZE / 2 + threadsPerBlock * elemsPerThread - 1) / (threadsPerBlock * elemsPerThread);
-////    printf("CUDA kernel launch with %d blocks of %d threads\n", blocksPerGrid, threadsPerBlock);
-//	d_encryptBuffer<<<blocksPerGrid, threadsPerBlock>>>(d_buffer);
-
-
-//	d_encryptBuffer<<<BLOCKS_COUNT, THREADS_PER_BLOCK>>>(d_buffer);
-	d_encryptBuffer<<<20, 250>>>(d_buffer);
-	CUDA_CHECK_RETURN(cudaThreadSynchronize());
-//	CUDA_CHECK_RETURN(cudaGetLastError());
-	CUDA_CHECK_RETURN(cudaMemcpy(bufferOut, d_buffer, sizeof(int) * FILE_PART_SIZE, cudaMemcpyDeviceToHost));
-
-	CUDA_CHECK_RETURN(cudaFree((void*) d_buffer));
-	// FIXME : never frees
+	//	const int limit = min(c_ePT * (c_tPB * blockIdx.x + threadIdx.x + 1), c_eN);
+	for (int i = c_ePT * (c_tPB * blockIdx.x + threadIdx.x);
+			i < min(c_ePT * (c_tPB * blockIdx.x + threadIdx.x + 1), c_eN); ++i) {
+		ll = (ulong) buffer[2 * i];
+		lr = (ulong) buffer[2 * i + 1];
+		d_decryptBlock(&ll, &lr);
+		buffer[2 * i] = (uint) ll;
+		buffer[2 * i + 1] = (uint) lr;
+	}
 }
 
-/*
- // TODO : to cuda
- void cudaDecryptBuffer(const uint * const bufferIn, uint * const bufferOut) {
- ulong ll, lr;
- for (int it = 0; it < FILE_PART_SIZE; it += 2) {
- ll = (ulong) bufferIn[it];
- lr = (ulong) bufferIn[it + 1];
- decryptBlock(key, &ll, &lr);
- bufferOut[it] = (uint) ll;
- bufferOut[it + 1] = (uint) lr;
- }
- }
- */
+void cudaEncryptBuffer(const uint * const bufferIn, uint * const bufferOut) {
+	static uint * d_buffer = NULL;
+	if (d_buffer == NULL) {
+		CUDA_CHECK_RETURN(cudaMalloc((void**) &d_buffer, sizeof(uint) * filePartSize));
+	}
+	CUDA_CHECK_RETURN(cudaMemcpy(d_buffer, bufferIn, sizeof(uint) * filePartSize, cudaMemcpyHostToDevice));
+
+	cudaEventRecord(start, 0);
+	d_encryptBuffer<<<bC, tPB>>>(d_buffer);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+
+	float time;
+	cudaEventElapsedTime(&time, start, stop);
+	kernelTime += (double) time;
+
+	CUDA_CHECK_RETURN(cudaThreadSynchronize());
+	CUDA_CHECK_RETURN(cudaGetLastError());
+	CUDA_CHECK_RETURN(cudaMemcpy(bufferOut, d_buffer, sizeof(int) * filePartSize, cudaMemcpyDeviceToHost));
+
+	// CUDA_CHECK_RETURN(cudaFree((void*) d_buffer)); // FIXME : never frees
+}
+
+void cudaDecryptBuffer(const uint * const bufferIn, uint * const bufferOut) {
+	static uint * d_buffer = NULL;
+	if (d_buffer == NULL) {
+		CUDA_CHECK_RETURN(cudaMalloc((void**) &d_buffer, sizeof(uint) * filePartSize));
+	}
+	CUDA_CHECK_RETURN(cudaMemcpy(d_buffer, bufferIn, sizeof(uint) * filePartSize, cudaMemcpyHostToDevice));
+
+	cudaEventRecord(start, 0);
+	d_decryptBuffer<<<bC, tPB>>>(d_buffer);
+	cudaEventRecord(stop, 0);
+	cudaEventSynchronize(stop);
+
+	float time;
+	cudaEventElapsedTime(&time, start, stop);
+	kernelTime += (double) time;
+
+	CUDA_CHECK_RETURN(cudaThreadSynchronize());
+	CUDA_CHECK_RETURN(cudaGetLastError());
+	CUDA_CHECK_RETURN(cudaMemcpy(bufferOut, d_buffer, sizeof(int) * filePartSize, cudaMemcpyDeviceToHost));
+
+	// CUDA_CHECK_RETURN(cudaFree((void*) d_buffer)); // FIXME : never frees
+}

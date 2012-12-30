@@ -3,13 +3,14 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <getopt.h>
+#include <time.h>
 
 /**  COMMON  **/
 typedef unsigned int uint;
 typedef unsigned char uchar;
 
-// MUST BE DIVIDABLE BY 2 !!!
-const int FILE_PART_SIZE = 1e6;
 
 typedef struct {
 	ulong sbox[4][256];
@@ -20,7 +21,14 @@ typedef struct {
 
 #define showErrAndQuit(msg) __showErrAndQuit(msg, __LINE__);
 
-void __showErrAndQuit(const char *s, int lineNum);
+void __showErrAndQuit(const char *msg, int lineNum);
+
+/** Same as showErrAndQuit, but doesn't print line number nor file */
+void showCommunicateAndQuit(const char *msg);
+
+void cpuInit();
+
+void cpuPrintStats(int verbose);
 
 ulong F(const KeyData*const keyData, ulong a);
 
@@ -30,16 +38,18 @@ void decryptBlock(const KeyData* const keyData, ulong *l, ulong *r);
 
 void initBlowfish(KeyData *keyData, const uchar* const  key, const int keyLength);
 
-void encryptFile(FILE* dataFile, FILE* output, KeyData *key);
+void encryptFile(FILE* dataFile, FILE* output, KeyData *key, const int computeOnCuda);
 
-void decryptdFile(FILE* dataFile, FILE* output, KeyData *key);
+void decryptdFile(FILE* dataFile, FILE* output, KeyData *key, const int computeOnCuda);
 
 void initKeysData(KeyData **pkey);
 
 
 /**  CUDA  **/
 
-void cudaInit(const int elementsNumber, const KeyData * key);
+void cudaInit(const int _filePartSize, const KeyData * key, const int ePT);
+
+void cudaPrintStats(int verbose);
 
 void cudaEncryptBuffer(const uint * const bufferIn, uint * const bufferOut);
 
