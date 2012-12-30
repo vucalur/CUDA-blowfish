@@ -1,2 +1,5 @@
 # Debug/*
 # Release/*
+Debug/src/*.d
+Release/src/*.d
+Release/blowfish

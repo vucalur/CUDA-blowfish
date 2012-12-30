@@ -415,7 +415,12 @@ void decryptdFile(FILE* dataFile, FILE* output, KeyData *key, const int computeO
 	}
 
 	if (computeOnCuda) {
+		start = clock();
+
 		cudaDecryptBuffer(bufferIn, bufferOut);
+
+		stop = clock();
+		cpuTimeSeconds += (double(stop - start)) / CLOCKS_PER_SEC;
 	} else {
 		start = clock();
 
@@ -457,7 +462,12 @@ void decryptdFile(FILE* dataFile, FILE* output, KeyData *key, const int computeO
 			}
 
 			if (computeOnCuda) {
+				start = clock();
+
 				cudaDecryptBuffer(bufferIn, bufferOut);
+
+				stop = clock();
+				cpuTimeSeconds += (double(stop - start)) / CLOCKS_PER_SEC;
 			} else {
 				start = clock();
 
