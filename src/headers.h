@@ -28,7 +28,7 @@ void showCommunicateAndQuit(const char *msg);
 
 void cpuInit();
 
-void cpuPrintStats(int verbose);
+void cpuPrintStats(int verbose, int computeOnCuda);
 
 ulong F(const KeyData*const keyData, ulong a);
 

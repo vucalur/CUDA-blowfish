@@ -22,8 +22,9 @@ static double kernelTime;
 static cudaEvent_t start, stop;
 
 
-void cudaInit(const int _filePartSize, const KeyData * key, const int ePT) {
+void cudaInit(const int _filePartSize, const KeyData * key, const int _ePT) {
 	filePartSize = _filePartSize;
+	ePT = _ePT;
 	if (filePartSize % 2 != 0) {
 		char communicate[200];
 		sprintf(communicate,
@@ -60,8 +61,8 @@ void cudaInit(const int _filePartSize, const KeyData * key, const int ePT) {
 void cudaPrintStats(int verbose) {
 	cudaEventDestroy(start);
 	cudaEventDestroy(stop);
-	printf("%s%f ms\n", (verbose) ? "total CUDA kernel time:\t" : "", kernelTime);
 	if (verbose) {
+		printf("total CUDA kernel time:\t%f ms\n", kernelTime);
 		printf("CUDA kernel launches parameters:\n"
 				"eN\t%d\n"
 				"ePT\t%d\n"
@@ -69,6 +70,8 @@ void cudaPrintStats(int verbose) {
 				"bC\t%d\n"
 				"tPB\t%d\n",
 				eN, ePT, tTN, bC, tPB);
+	} else {
+		printf("%f\t%d\t%d\t%d\t%d\t%d\t", kernelTime, eN, ePT, tTN, bC, tPB);
 	}
 }
 

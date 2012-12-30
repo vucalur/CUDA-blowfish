@@ -4,11 +4,17 @@
 #include <string.h>
 #include "headers.h"
 
-// FIXME : update
 #define USAGE \
 	"Usage: \n" \
 	"./blowfish plaintext.in ciphertext.out < KeyFile.in \n" \
-	"./blowfish -d ciphertext.in plaintext.out < KeyFile.in \n"
+	"./blowfish -d ciphertext.in plaintext.out < KeyFile.in \n" \
+	"\nOPTIONS\n" \
+	"\t-d, --decrypt\n" \
+	"\t-c, --cuda\n" \
+	"\t-s, --stats\n" \
+	"\t-v, --verbose\n" \
+	"\t-f VALUE, --fPS=VALUE\n" \
+	"\t-e VALUE, --ePT=VALUE\n"
 
 void __showErrAndQuit(const char *msg, int lineNum) {
 	printf("line: %i\t", lineNum);
@@ -295,8 +301,12 @@ void cpuInit() {
 	cpuTimeSeconds = 0;	// explicitly
 }
 
-void cpuPrintStats(int verbose) {
-	printf("%f ms\n", cpuTimeSeconds * 1000);
+void cpuPrintStats(int verbose, int computeOnCuda) {
+	if (verbose) {
+		printf("cpu time %f ms\n", cpuTimeSeconds * 1000);
+	} else {
+		printf("%f\t", cpuTimeSeconds * 1000);
+	}
 }
 
 // MUST BE DIVISIBLE BY 2 !!!
@@ -521,7 +531,7 @@ void initKeysData(KeyData **pkey) {
 int main(int argc, char* argv[]) {
 	KeyData *key;
 	int isDecryption = 0;
-	int printReports = 0;
+	int printStats = 0;
 	int verbose = 0;
 	int computeOnCuda = 0;
 	int ePT = 500;
@@ -529,7 +539,7 @@ int main(int argc, char* argv[]) {
 	struct option longOptions[] = {
 		{"decrypt",		no_argument,		0, 'd'},
 		{"cuda",		no_argument,		0, 'c'},
-		{"report",		no_argument,		0, 'r'},
+		{"stats",		no_argument,		0, 's'},
 		{"verbose",		no_argument,		0, 'v'},
 		{"fPS",			required_argument,	0, 'f'},
 		{"ePT",			required_argument,	0, 'e'},
@@ -538,7 +548,7 @@ int main(int argc, char* argv[]) {
 	/* getopt_long stores the option index here. */
 	int option_index = 0;
 	int opt;
-	while ((opt = getopt_long(argc, argv, "dcrvf:e:", longOptions, &option_index)) != -1) {
+	while ((opt = getopt_long(argc, argv, "dcsvf:e:", longOptions, &option_index)) != -1) {
 		switch (opt) {
 		case 'd':
 			isDecryption = 1;
@@ -546,8 +556,8 @@ int main(int argc, char* argv[]) {
 		case 'c':
 			computeOnCuda = 1;
 			break;
-		case 'r':
-			printReports = 1;
+		case 's':
+			printStats = 1;
 			break;
 		case 'v':
 			verbose = 1;
@@ -562,13 +572,13 @@ int main(int argc, char* argv[]) {
 			/* getopt_long already printed an error message. */
 			break;
 		default:
-			showErrAndQuit(USAGE);
+			showCommunicateAndQuit(USAGE);
 			/* no break */
 		}
 	}
 
 	if (optind + 1 >= argc)
-		showErrAndQuit(USAGE);
+		showCommunicateAndQuit(USAGE);
 
 	FILE* input = fopen(argv[optind], "r");
 	if (input == NULL)
@@ -598,13 +608,14 @@ int main(int argc, char* argv[]) {
 	if (fclose(input) == EOF)
 		showErrAndQuit(strerror(errno));
 
-	if (printReports) {
+	if (printStats) {
 		if (computeOnCuda) {
 			cudaPrintStats(verbose);
-			cpuPrintStats(verbose);
+			cpuPrintStats(verbose, 1);
 		} else {
-			cpuPrintStats(verbose);
+			cpuPrintStats(verbose, 0);
 		}
+		printf("\n");
 	}
 
 	return EXIT_SUCCESS;
