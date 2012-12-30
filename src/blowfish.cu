@@ -620,8 +620,8 @@ int main(int argc, char* argv[]) {
 
 	if (printStats) {
 		if (computeOnCuda) {
-			cudaPrintStats(verbose);
 			cpuPrintStats(verbose, 1);
+			cudaPrintStats(verbose);
 		} else {
 			cpuPrintStats(verbose, 0);
 		}
